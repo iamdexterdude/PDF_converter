@@ -1,0 +1,25 @@
+# Bot runtime
+sessions/
+bot.log
+bot.log.*
+*.log
+
+# Python
+__pycache__/
+*.py[cod]
+*.so
+.Python
+.venv/
+venv/
+env/
+*.egg-info/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Secrets — never commit
+.env
+.env.local
