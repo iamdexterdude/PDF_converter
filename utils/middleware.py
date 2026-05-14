@@ -31,6 +31,11 @@ class RateLimitMiddleware(BaseMiddleware):
         if user is None:
             return await handler(event, data)
 
+        # Never rate-limit media uploads — albums arrive as a burst, and the
+        # rate limiter would drop everything past the first one.
+        if isinstance(event, Message) and (event.photo or event.document or event.media_group_id):
+            return await handler(event, data)
+
         now = time.monotonic()
         elapsed = now - self._last_seen[user.id]
         if elapsed < self.rate:

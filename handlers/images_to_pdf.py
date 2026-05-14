@@ -1,8 +1,10 @@
 """Images → PDF flow."""
 from __future__ import annotations
 
+import asyncio
 import logging
 from pathlib import Path
+from typing import Dict
 
 from aiogram import Bot, F, Router
 from aiogram.fsm.context import FSMContext
@@ -21,6 +23,10 @@ from utils.session import Session
 
 router = Router(name="images_to_pdf")
 log = logging.getLogger(__name__)
+
+# Debounce timers for album acks — keyed by (user_id, media_group_id)
+_album_acks: Dict[tuple[int, str], asyncio.Task] = {}
+_ALBUM_DEBOUNCE_SECS = 1.5
 
 
 class ImgFlow(StatesGroup):
@@ -102,10 +108,37 @@ async def on_doc(msg: Message, bot: Bot, session: Session, state: FSMContext) ->
 
 
 async def _ack_image(msg: Message, session: Session) -> None:
+    """Send a confirmation. For media groups (albums), debounce so we send
+    exactly one message after the whole batch arrives, instead of N messages."""
+    if msg.media_group_id:
+        key = (msg.from_user.id, msg.media_group_id)
+        existing = _album_acks.pop(key, None)
+        if existing and not existing.done():
+            existing.cancel()
+        _album_acks[key] = asyncio.create_task(_delayed_album_ack(key, msg, session))
+        return
+
+    # Single-message path — reply immediately
     await msg.reply(
         f"✅ Added (<b>{session.image_count}</b> total)",
         reply_markup=images_session_kb(session.image_count),
     )
+
+
+async def _delayed_album_ack(key: tuple[int, str], msg: Message, session: Session) -> None:
+    """Wait briefly for more album items, then send one summary message."""
+    try:
+        await asyncio.sleep(_ALBUM_DEBOUNCE_SECS)
+    except asyncio.CancelledError:
+        return
+    _album_acks.pop(key, None)
+    try:
+        await msg.answer(
+            f"✅ Album received — <b>{session.image_count}</b> image(s) total",
+            reply_markup=images_session_kb(session.image_count),
+        )
+    except Exception:  # noqa: BLE001
+        log.exception("Album ack failed")
 
 
 # ---------- Inline session controls ----------
