@@ -1,0 +1,16 @@
+# Core
+aiogram>=3.4,<4.0
+
+# PDF
+pypdf>=4.0
+reportlab>=4.0
+pypdfium2>=4.25     # PDF rendering fallback (no system deps)
+
+# Imaging
+Pillow>=10.0
+
+# Optional (recommended)
+# Install these for the OCR & PDF→image features at full quality:
+# pdf2image      # needs poppler-utils on the system
+# pytesseract    # needs tesseract on the system
+# ocrmypdf       # bundles tesseract+ghostscript; best OCR path
