@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import signal
 import sys
 from logging.handlers import RotatingFileHandler
@@ -25,6 +26,7 @@ from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
+from aiohttp import web
 
 from config import settings
 from handlers import (
@@ -52,12 +54,15 @@ def setup_logging() -> None:
     console.setFormatter(formatter)
     root.addHandler(console)
 
-    # Rotating file (10MB x 5 files)
-    file_handler = RotatingFileHandler(
-        settings.LOG_FILE, maxBytes=10 * 1024 * 1024, backupCount=5, encoding="utf-8"
-    )
-    file_handler.setFormatter(formatter)
-    root.addHandler(file_handler)
+    # Rotating file (10MB x 5 files) — best-effort, skip if path not writable
+    try:
+        file_handler = RotatingFileHandler(
+            settings.LOG_FILE, maxBytes=10 * 1024 * 1024, backupCount=5, encoding="utf-8"
+        )
+        file_handler.setFormatter(formatter)
+        root.addHandler(file_handler)
+    except OSError as e:
+        logging.warning("File logging disabled: %s", e)
 
     # Quiet noisy libs
     logging.getLogger("aiogram.event").setLevel(logging.WARNING)
@@ -72,6 +77,24 @@ async def on_startup(bot: Bot) -> None:
 async def on_shutdown(bot: Bot) -> None:
     logging.info("Shutting down — closing bot session")
     await bot.session.close()
+
+
+async def _health(_request: web.Request) -> web.Response:
+    return web.Response(text="ok")
+
+
+async def _start_health_server(port: int) -> web.AppRunner:
+    """Tiny HTTP server so platforms requiring an open port are satisfied,
+    and so an uptime-pinger can keep the service awake on Render's free tier."""
+    app = web.Application()
+    app.router.add_get("/", _health)
+    app.router.add_get("/health", _health)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+    logging.info("Health server listening on :%d", port)
+    return runner
 
 
 async def main() -> None:
@@ -101,6 +124,16 @@ async def main() -> None:
     dp.startup.register(on_startup)
     dp.shutdown.register(on_shutdown)
 
+    # If $PORT is set (Render Web Service / Railway / Heroku-style), expose
+    # a tiny HTTP health endpoint. Locally — when PORT is unset — no server runs.
+    health_runner: web.AppRunner | None = None
+    port_str = os.getenv("PORT")
+    if port_str:
+        try:
+            health_runner = await _start_health_server(int(port_str))
+        except Exception as e:  # noqa: BLE001
+            logging.exception("Health server failed to start: %s", e)
+
     # Graceful shutdown on SIGTERM / SIGINT
     loop = asyncio.get_running_loop()
     stop_event = asyncio.Event()
@@ -126,6 +159,8 @@ async def main() -> None:
     for task in pending:
         task.cancel()
     await dp.stop_polling()
+    if health_runner is not None:
+        await health_runner.cleanup()
 
 
 if __name__ == "__main__":
