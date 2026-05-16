@@ -5,6 +5,7 @@ aiogram>=3.4,<4.0
 pypdf>=4.0
 reportlab>=4.0
 pypdfium2>=4.25     # PDF rendering fallback (no system deps)
+cryptography>=3.1
 
 # Imaging
 Pillow>=10.0
